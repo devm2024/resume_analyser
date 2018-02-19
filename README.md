@@ -2,5 +2,5 @@
 1. Devesh Maheswari
 2. Sooraj Mangalath Subrahmannian
 
-# resume_analyser
+# Resume Analyser
 Analysis of Resume and job chances prediction 
