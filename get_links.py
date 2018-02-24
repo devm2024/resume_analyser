@@ -2,6 +2,7 @@ import time
 from selenium import webdriver
 from login import login
 import numpy as np
+import pandas as pd
 
 def get_num_pages(url):
     driver.get(url)
@@ -37,3 +38,5 @@ for jt in tqdm(job_titles):
             for result in results:
                 tag = result.find_element_by_xpath('./a')
                 title.append(tag.get_attribute('href'))
+title = np.array(title)
+pd.DataFrame(title,columns=['links']).to_csv('links.csv')
