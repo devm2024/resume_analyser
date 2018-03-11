@@ -1,17 +1,28 @@
 import time
 from selenium import webdriver
+from ratelimiter import RateLimiter
 from login import login
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+from tqdm._tqdm_notebook import tqdm_notebook
 
-def get_num_pages(url):
+
+def get_num_pages(jt,rb,start=0):
+    # Gets the counts of links in a page.
+    url = f"https://www.indeed.com/resumes?q={jt}&co=US&lmd=all&rb={rb}&start=50"
     driver.get(url)
     result_cnt = driver.find_element_by_id('result_count')
-    result_cnt = int(result_cnt.text.split(' ')[0].replace(',',''))
-    pagenum = np.array(range(round(result_cnt/50)))*50
-    return pagenum
+    if result_cnt.text != '':
+        result_cnt = int(result_cnt.text.split(' ')[0].replace(',',''))
+        pagenum = np.array(range(round(result_cnt/50)))*50
+        return pagenum[(pagenum >=start) & (pagenum <5000)]
+    else:
+        print(jt)
+        return None
 
 def indeedlogin():
+    # To sign in to indeed using your email id and password
     driver.get('https://secure.indeed.com/account')
     credentials = login()
     userfield = driver.find_element_by_id('signin_email')
@@ -20,23 +31,50 @@ def indeedlogin():
     passwordfield.send_keys(credentials[1])
     passwordfield.submit()
 
-driver = webdriver.Chrome('/usr/local/bin/chromedriver')
-indeedlogin()
-title =[]
-job_titles = {'data+analyst':['jtid%3A25613','jtid%3A2','jtid%3A116367'],
-    'data+scientist':['jtid%3A540143','jtid%3A777866','jtid%3A4042737']}
-for jt in tqdm(job_titles):
-    rbs = job_titles[jt]
-    for rb in tqdm(rbs):
-        url = f"https://www.indeed.com/resumes?q={jt}&l=CA&co=US&rb={rb}&lmd=all&start=50"
-        pagenum = get_num_pages(url)
-        for num in tqdm(pagenum):
-            url = f"https://www.indeed.com/resumes?q={jt}&l=CA&co=US&rb={rb}&lmd=all&start={num}"
-            driver.get(url)
-            print(url)
-            results = driver.find_elements_by_xpath('//div[@class="app_name"]')
-            for result in results:
-                tag = result.find_element_by_xpath('./a')
-                title.append(tag.get_attribute('href'))
-title = np.array(title)
-pd.DataFrame(title,columns=['links']).to_csv('links.csv')
+def scrapper(jt,num,rb):
+    # Given a job title,page num and year of exp id, collect all the links
+    url = f"https://www.indeed.com/resumes?q={jt}&co=US&lmd=all&rb={rb}&start={num}"
+    temp =[]
+    driver.get(url)
+    results = driver.find_elements_by_xpath('//div[@class="app_name"]')
+    if results!= []:
+        for result in results:
+            tag = result.find_element_by_xpath('./a')
+            temp.append(tag.get_attribute('href'))
+        return temp
+    else:
+        return ''
+        
+def limited(until):
+    duration = int(round(until - time.time()))
+    print('Rate limited, sleeping for {:d} seconds'.format(duration))
+
+if __name__ == "__main__":
+    output_path = 'links_ds.csv'
+    driver = webdriver.Chrome('/usr/local/bin/chromedriver')
+    indeedlogin()
+    title =[]
+    job_titles =['"data scientist"']
+    exp_rbdict  ={'<1year':'yoe%3A1-11',
+                 '1-2 years':'yoe%3A12-24',
+                 '3-5 years':'yoe%3A25-60',
+                 '6-10 years':'yoe%3A61-120',
+                 'More than 10 years':'yoe%3A121'}
+    rate_limiter = RateLimiter(max_calls=17, period=180, callback=limited)
+    for jt in tqdm(job_titles):  
+        for rb in exp_rbdict:
+            pagenum = get_num_pages(jt,exp_rbdict[rb])
+            if pagenum is not None:
+                for num in tqdm(pagenum):
+                    with rate_limiter:
+                        temp =scrapper(jt,num,exp_rbdict[rb])
+                        title+=temp
+                        if num%500 ==0 or len(temp)==0: 
+                            data = pd.DataFrame(np.array(title),columns=['links'])
+                            data.to_csv(output_path)
+                            print('No of links:',len(title))
+            else:
+                print('No pages available')
+    driver.quit() # close browser
+    data = pd.DataFrame(np.array(title),columns=['links'])
+    data.to_csv(output_path)
